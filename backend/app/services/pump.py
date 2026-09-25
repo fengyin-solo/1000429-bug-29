@@ -9,7 +9,11 @@ MODULE = "pump"
 REQUIRED_FIELDS = ["泵站编号", "泵组台数", "运行泵号"]
 STATUS_ORDER = ["待启泵", "运行中", "待检修", "已停泵"]
 ACTION_RULES = {"启泵运行": "运行中", "安排检修": "待检修", "停泵": "已停泵"}
-NEGATIVE_ACTIONS = []
+NEGATIVE_ACTIONS = ["停泵"]
+TERMINAL_STATUS = STATUS_ORDER[-1]
+STATUS_FIELD = "泵站状态"
+# 停泵后要清空的实时运行读数，避免残留上一次运行的值
+RUNTIME_FIELDS = ["运行泵号", "出水流量", "液位高度", "运行电流"]
 
 
 class PumpService:
@@ -41,6 +45,7 @@ class PumpService:
         entry = {"id": max((int(row.get("id", 0)) for row in rows), default=0) + 1}
         entry.update({field: values.get(field) for field in REQUIRED_FIELDS})
         entry["status"] = STATUS_ORDER[0]
+        entry[STATUS_FIELD] = STATUS_ORDER[0]
         entry["pending"] = True
         entry["abnormal"] = False
         rows.append(entry)
@@ -50,12 +55,24 @@ class PumpService:
         entry = store.find(MODULE, entry_id)
         if entry is None:
             return None, f"泵站 {entry_id} 不存在或已归档"
+        if not action:
+            return None, "未指定要执行的动作，可选：启泵运行、安排检修、停泵"
         if action not in ACTION_RULES:
             return None, f"动作「{action}」不属于泵站运行可执行范围"
         target = ACTION_RULES[action]
         if target not in STATUS_ORDER:
             return None, f"目标状态「{target}」不在允许的状态序列里"
+        current = str(entry.get("status") or "")
+        if current == target:
+            # 重复提交同一动作：幂等返回当前状态，不重复写入
+            return entry, f"泵站已处于「{target}」，本次未重复写入"
+        if current == TERMINAL_STATUS:
+            return None, f"泵站已停泵，不能再执行「{action}」，如需重新投运请登记新泵站"
         entry["status"] = target
+        entry[STATUS_FIELD] = target
         entry["pending"] = target != STATUS_ORDER[-1]
         entry["abnormal"] = action in NEGATIVE_ACTIONS
+        if target == TERMINAL_STATUS:
+            for field in RUNTIME_FIELDS:
+                entry[field] = None
         return entry, f"泵站已{action}"

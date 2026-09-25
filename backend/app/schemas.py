@@ -25,6 +25,8 @@ class EntryPayload(BaseModel):
     """登记或修改一条业务记录时提交的字段集合。"""
 
     values: dict[str, Any] = Field(default_factory=dict)
+    # 兼容前端平铺提交的动作字段，与 values.action 等价
+    action: str | None = None
     remark: str | None = None
 
 

@@ -39,7 +39,7 @@
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in availableActions(row)"
               :key="action"
               class="link"
               type="button"
@@ -47,6 +47,7 @@
             >
               {{ action }}
             </button>
+            <span v-if="!availableActions(row).length" class="muted-text">已停泵，无可用动作</span>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -80,6 +81,11 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const TERMINAL_STATUS = '已停泵'
+
+function availableActions(row: Row) {
+  return row.status === TERMINAL_STATUS ? [] : actions
+}
 
 function resetFilters() {
   filters.value = {}
@@ -103,6 +109,11 @@ async function runAction(action: string, row: Row) {
     })
     if (!response.ok) {
       throw new Error('泵站运行动作未生效，请稍后重试')
+    }
+    const payload = await response.json()
+    if (!payload.ok) {
+      errorMessage.value = payload.message || '泵站运行动作未生效，请稍后重试'
+      return
     }
     await reload()
   } catch (error) {
