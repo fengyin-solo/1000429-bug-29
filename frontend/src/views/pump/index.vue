@@ -43,6 +43,8 @@
               :key="action"
               class="link"
               type="button"
+              :disabled="!isActionAllowed(action, row)"
+              :title="isActionAllowed(action, row) ? '' : '已停泵的泵站不能再执行该动作'"
               @click="runAction(action, row)"
             >
               {{ action }}
@@ -67,12 +69,13 @@ import { onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
-type Row = Record<string, string | number | null>
+type Row = Record<string, string | number | boolean | null>
 
 const ENDPOINT = '/api/pump'
 const columns = ["泵站编号", "泵组台数", "运行泵号", "出水流量", "液位高度", "运行电流", "值守人员", "泵站状态"]
 const actions = ["启泵运行", "安排检修", "停泵"]
 const statuses = ["待启泵", "运行中", "待检修", "已停泵"]
+const STOPPED_STATUS = "已停泵"
 const stats = [{"label": "运行泵站", "value": 0}, {"label": "待检修泵站", "value": 0}, {"label": "今日提升水量", "value": 0}]
 
 const rows = ref<Row[]>([])
@@ -80,6 +83,14 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+
+function isActionAllowed(action: string, row: Row): boolean {
+  // 已停泵是终态，只允许重复点停泵（幂等），不允许重新启泵或再安排检修。
+  if (row.status === STOPPED_STATUS) {
+    return action === "停泵"
+  }
+  return true
+}
 
 function resetFilters() {
   filters.value = {}
@@ -103,6 +114,12 @@ async function runAction(action: string, row: Row) {
     })
     if (!response.ok) {
       throw new Error('泵站运行动作未生效，请稍后重试')
+    }
+    const result = await response.json()
+    // 业务校验不过时接口仍返回 200 + ok:false，需要把原因提示给值班人员。
+    if (result && result.ok === false) {
+      errorMessage.value = result.message || '泵站运行动作未生效'
+      return
     }
     await reload()
   } catch (error) {

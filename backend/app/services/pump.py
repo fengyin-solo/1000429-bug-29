@@ -9,7 +9,11 @@ MODULE = "pump"
 REQUIRED_FIELDS = ["泵站编号", "泵组台数", "运行泵号"]
 STATUS_ORDER = ["待启泵", "运行中", "待检修", "已停泵"]
 ACTION_RULES = {"启泵运行": "运行中", "安排检修": "待检修", "停泵": "已停泵"}
-NEGATIVE_ACTIONS = []
+STOPPED_STATUS = "已停泵"
+STOP_ACTION = "停泵"
+
+# 停泵后这些运行过程量不再有意义，需要一并清空，避免残留上一次运行的值。
+RUNTIME_FIELDS = ["运行泵号", "出水流量", "液位高度", "运行电流"]
 
 
 class PumpService:
@@ -52,10 +56,24 @@ class PumpService:
             return None, f"泵站 {entry_id} 不存在或已归档"
         if action not in ACTION_RULES:
             return None, f"动作「{action}」不属于泵站运行可执行范围"
+
+        current = entry.get("status")
         target = ACTION_RULES[action]
-        if target not in STATUS_ORDER:
-            return None, f"目标状态「{target}」不在允许的状态序列里"
+
+        # 已停泵是终态：除了重复停幂等返回，其余动作一律拒绝，泵站不能被重新启泵。
+        if current == STOPPED_STATUS:
+            if action == STOP_ACTION:
+                return entry, "泵站已处于停泵状态，无需重复停泵"
+            return None, "泵站已停泵，不能再执行该动作；如需投运请重新登记泵站"
+
+        if target == current:
+            return entry, f"泵站已是「{current}」状态，无需重复操作"
+
         entry["status"] = target
-        entry["pending"] = target != STATUS_ORDER[-1]
-        entry["abnormal"] = action in NEGATIVE_ACTIONS
+        entry["pending"] = target != STOPPED_STATUS
+        # 停泵计入异常量，使概览与列表的口径保持一致。
+        entry["abnormal"] = target == STOPPED_STATUS
+        if action == STOP_ACTION:
+            for field in RUNTIME_FIELDS:
+                entry[field] = ""
         return entry, f"泵站已{action}"
